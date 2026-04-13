@@ -301,7 +301,7 @@ export class Packager {
       input: path.join(src, `${entry}.js`),
       plugins: [
         generateDeclarations({
-          moduleName: packageName,
+          moduleName: entry,
           defaultExport: "SCIMMY",
         }),
       ],
@@ -317,6 +317,43 @@ export class Packager {
       format: "esm",
       plugins: [filterGeneratedBundle({ emitDeclarationOnly: true })],
     });
+
+    // OstensiblyTyped currently emits hardcoded "scimmy" specifiers in declarations.
+    // Rewrite all generated declaration modules/imports to this package's real name.
+    const rewriteDeclarations = async (dirPath) => {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const entryPath = path.join(dirPath, entry.name);
+
+        if (entry.isDirectory()) {
+          await rewriteDeclarations(entryPath);
+          continue;
+        }
+
+        if (!entry.isFile() || !entry.name.endsWith(".d.ts")) continue;
+
+        const declaration = await fs.readFile(entryPath, "utf8");
+        const rewritten = declaration
+          .replaceAll(
+            'declare module "scimmy/',
+            `declare module "${packageName}/`,
+          )
+          .replaceAll(
+            'declare module "scimmy"',
+            `declare module "${packageName}"`,
+          )
+          .replaceAll('"scimmy/', `"${packageName}/`)
+          .replaceAll('"scimmy"', `"${packageName}"`);
+
+        if (rewritten !== declaration) {
+          await fs.writeFile(entryPath, rewritten);
+        }
+      }
+    };
+
+    await rewriteDeclarations(dest);
+
     return originalFileNames.map(
       (fileName) => `./${path.relative(cwd, fileName)}`,
     );
